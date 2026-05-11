@@ -1,0 +1,8 @@
+id,category,severity,resource_type,resource_id,description,recommendation,compliance,detection_date
+IAM-002-REDACTED,IAM,Medium,IAM Access Key,user-A/AKIA*REDACTED*,Access key for user is 124 days old,Rotate access keys at least every 90 days,"CIS 1.4, AWS Well-Architected",2026-05-06T13:05:11
+IAM-001-REDACTED,IAM,High,IAM User,user-B,User has console access but no MFA enabled,Enable MFA for all users with console access,"CIS 1.2, AWS Well-Architected",2026-05-06T13:05:11
+IAM-006,IAM,High,IAM Password Policy,account-password-policy,No IAM password policy is set for the account,Configure a strong password policy,"CIS 1.5-1.11, AWS Well-Architected",2026-05-06T13:05:11
+SCP-001,SCP,Medium,Service Control Policy,none,No custom SCPs detected in the organization,Implement SCPs to enforce security guardrails across the organization,AWS Well-Architected,2026-05-06T13:05:11
+SECHUB-POSITIVE-001,SecurityHub,Informational,AWS Security Hub,none,No high/critical IAM-related findings detected,Continue monitoring Security Hub findings,AWS Well-Architected,2026-05-06T13:05:12
+AA-POSITIVE-001,Access Analyzer,Informational,IAM Access Analyzer,ExternalAccess-Analyzer-REDACTED,No external access findings detected by IAM Access Analyzer,Continue monitoring with IAM Access Analyzer,AWS Well-Architected,2026-05-06T13:05:12
+CT-NOT-ENABLED,CloudTrail,High,AWS CloudTrail,none,CloudTrail is not enabled in this account,Enable CloudTrail to track API activity across your AWS account,AWS Well-Architected,2026-05-06T13:05:12

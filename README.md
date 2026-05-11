@@ -1,304 +1,193 @@
-[![Tests](https://github.com/ajy0127/aws_automated_access_review/actions/workflows/tests.yml/badge.svg)](https://github.com/ajy0127/aws_automated_access_review/actions/workflows/tests.yml)
+# AWS Automated Access Review
+
+> A hands-on cloud-security lab where I deployed a serverless access-review pipeline that audits AWS IAM, scans Security Hub / Access Analyzer / CloudTrail, and emails a clean executive report — auditor-ready, zero manual work.
+
+**Built by:** [Shuayb](https://www.linkedin.com/in/shu-/) — student / self-learner exploring cloud security, IAM, and Python automation.
+**Original scaffold:** [@ajy0127](https://github.com/ajy0127/aws_automated_access_review) — extended and re-documented as a learning exercise.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CFN Lint](https://img.shields.io/badge/CFN-Lint-blue.svg)](https://github.com/aws-cloudformation/cfn-lint)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-# AWS Automated Access Review
-## A Professional IAM Security Automation Tool
+---
 
-A comprehensive tool for automating AWS IAM security reviews. This project provides security professionals and GRC teams with automated access auditing capabilities to enhance cloud security posture and support compliance requirements. Use this tool to develop your portfolio while gaining practical cloud security skills.
+## What this project does
 
-> **⚠️ DISCLAIMER**: This tool is provided as-is without warranty of any kind. While it has been tested in development environments, thorough validation is required before deploying in production. Always review the code, test in a non-production environment first, and ensure it meets your organization's security requirements and compliance standards.
+Manual access reviews are the auditor-pain that won't go away — every quarter someone clicks through IAM, exports CSVs, eyeballs MFA, and writes the same summary. This project automates the entire loop:
 
-## Key Benefits
+1. A scheduled Lambda runs every 30 days (configurable)
+2. It pulls findings from **IAM**, **Security Hub**, **IAM Access Analyzer**, **CloudTrail config**, and checks for **SCPs**
+3. **Amazon Bedrock** (Claude) generates a plain-English executive narrative
+4. A timestamped CSV + the AI summary land in S3 and in your inbox via SES
 
-- **Enhanced Security Posture**: Systematically identify and remediate IAM security risks.
-- **Professional Reporting**: Generate comprehensive reports for stakeholders and auditors.
-- **GRC Expertise Development**: Build practical skills in governance, risk, and compliance.
-- **Cloud Automation Experience**: Gain hands-on experience with Lambda and Bedrock integration.
+Result: monthly evidence packets ready to drop into a SOC 2 / ISO 27001 audit folder.
 
-## Skills Development Opportunities
+## Real run from my AWS lab
 
-1. **IAM Security Expertise**: Understand AWS access controls and identify common misconfigurations.
-2. **Compliance Reporting**: Create actionable security reports for stakeholders and auditors.
-3. **AI Integration**: Leverage Amazon Bedrock to transform raw security data into actionable insights.
-4. **Serverless Architecture**: Deploy and manage cloud-native security automation tools.
+I deployed this in my own sandbox account and the first scheduled report flagged **7 real findings** — a useful (and slightly embarrassing) snapshot of the lab's state:
 
-## About
+| Severity | Category | Finding |
+|---|---|---|
+| **High** | IAM | An IAM user with console access had **no MFA** |
+| **High** | IAM | The account had **no password policy** configured |
+| **High** | CloudTrail | **CloudTrail was not enabled** in the account |
+| Medium | IAM | An access key was **124 days old** (CIS 1.4 says rotate every 90) |
+| Medium | SCP | **No custom Service Control Policies** in the org |
+| Info | Security Hub | No high/critical IAM findings — clean |
+| Info | Access Analyzer | No external-access findings — clean |
 
-AWS Access Review is a comprehensive, zero-configuration security assessment tool that automatically evaluates your AWS environment for potential security risks and compliance gaps. Built for security professionals and GRC teams, it combines findings from multiple AWS security services into a clear, actionable report with AI-powered analysis.
+Each finding includes the CIS / AWS Well-Architected control it maps to and a remediation recommendation. A redacted version of the CSV is in [`examples/my-run-redacted.csv`](examples/my-run-redacted.csv).
 
-Unlike complex security dashboards that require constant monitoring, AWS Access Review delivers insights directly to stakeholders' inboxes on a scheduled basis. The tool focuses on identifying IAM misconfigurations, overly permissive permissions, missing security controls, and external access risks—the most common sources of cloud security incidents.
+> All three High findings were genuine misconfigurations in my lab — fixing them was a useful exercise in turning a finding into a remediation ticket.
 
-With single-click deployment and integration with native AWS services, you can start receiving detailed security reports in minutes without extensive setup or third-party dependencies.
+## Architecture
 
-This tool is part of a larger initiative to empower GRC professionals in showcasing their practical AWS GRC engineering implementation skills. Visit the [GRC Portfolio Hub](https://github.com/ajy0127/grc_portfolio/tree/main) for more resources and projects focused on governance, risk, and compliance expertise development.
+```
+┌──────────────┐
+│ EventBridge  │ (cron: every 30 days)
+└──────┬───────┘
+       ▼
+┌────────────────────┐    pulls findings from    ┌──────────────────────┐
+│  Lambda (Python)   │◀─────────────────────────▶│ IAM · Security Hub   │
+│  modular checks    │                           │ Access Analyzer      │
+└──────┬─────────────┘                           │ CloudTrail · SCPs    │
+       │  raw findings                           └──────────────────────┘
+       ▼
+┌────────────────────┐    AI narrative           ┌──────────────────────┐
+│  Amazon Bedrock    │◀─────────────────────────▶│  Claude model        │
+└──────┬─────────────┘                           └──────────────────────┘
+       │  CSV + summary
+       ▼
+┌────────────────────┐         ┌──────────────────┐
+│       S3           │────────▶│  SES → email     │
+└────────────────────┘         └──────────────────┘
+```
 
-### Compliance Use Case: SOC 2 Type 2 Audits
+**AWS services used:** Lambda · S3 · SES · EventBridge · Bedrock · Security Hub · IAM Access Analyzer · CloudTrail · CloudFormation
 
-Perfect for GRC professionals managing SOC 2 Type 2 and similar compliance frameworks. The tool:
+## Tech stack
 
-- Runs monthly access reviews automatically (default: every 30 days)
-- Creates detailed, timestamped reports for audit evidence
-- Integrates with compliance workflows:
-  1. Receive monthly reports via email
-  2. Store reports as audit evidence
-  3. Present to auditors when they sample specific months during assessment
+- **Python 3.11** with modular checks (`iam_findings.py`, `securityhub_findings.py`, `access_analyzer_findings.py`, `cloudtrail_findings.py`, `scp_findings.py`)
+- **boto3** — AWS SDK
+- **Amazon Bedrock (Claude)** — narrative generation
+- **CloudFormation** — IaC (`templates/access-review-real.yaml`)
+- **pytest** + **flake8** + **black** — tests, lint, formatting
+- **GitHub Actions** — CI on every push
 
-## Core Features
+## What I learned
 
-- **IAM Security Auditing**: Identify MFA gaps and excessive permissions through detailed CSV reports.
-- **Security Hub Integration**: Consolidate and summarize security findings from AWS Security Hub.
-- **External Access Analysis**: Detect public resource exposure using IAM Access Analyzer.
-- **AI-Powered Reporting**: Transform raw security data into readable, actionable insights with Amazon Bedrock.
-- **Automated Email Delivery**: Receive comprehensive security reports directly to designated inbox.
-- **Scheduled Execution**: Configure automatic security assessments at your preferred intervals.
+Honest list of things this project taught me:
 
-*Note*: This project is under active development with ongoing enhancements planned.
-
-## Key Deliverables
-
-1. **IAM Compliance Report**: Comprehensive CSV listing of security findings with severity ratings.
-   - Example: See `examples/sample-access-report.csv`.
-2. **Executive Summary**: AI-generated narrative analysis of key security risks and remediation recommendations.
-3. **Implementation Documentation**: Technical documentation of deployment architecture and configuration.
+- **Mapping findings to controls.** It's one thing to detect "no MFA"; it's another to tag it with `CIS 1.2` so an auditor can use it as evidence. The `compliance` column in every finding made the report feel real.
+- **AI is great at narrative, not detection.** Bedrock's executive summary saves real time on the *write-up*, but the actual checks must be deterministic Python — not LLM judgment calls.
+- **SES verification is non-obvious.** First deploy "succeeded" but no email arrived because I hadn't clicked the SES verification link. The README now has a giant warning.
+- **CloudFormation has two patterns for Lambda code.** Embedded (in the YAML, fast for demos) vs. external zip (production). This repo includes both — useful for understanding the trade-off.
+- **Modular Lambda matters.** Splitting checks into modules (`src/lambda/modules/*.py`) made it easy to add tests and to reason about which AWS API call belongs where.
+- **My lab was less secure than I thought.** Three High findings in a personal account — a humbling reminder that GRC work starts at home.
 
 ## Prerequisites
 
-- AWS CLI installed and configured with appropriate permissions
-- Python 3.11 or higher
-- An AWS account with the following services enabled:
-  - AWS Security Hub
-  - IAM Access Analyzer
-  - Amazon SES (with verified email for receiving reports)
-  - Amazon Bedrock (with access to Claude model)
+- AWS CLI configured with appropriate permissions
+- Python 3.11+
+- AWS services enabled in your account:
+  - **AWS Security Hub**
+  - **IAM Access Analyzer**
+  - **Amazon SES** (with a verified email)
+  - **Amazon Bedrock** (with access to a Claude model)
 
-## Quick Start Guide
+## Quick start
 
-1. **Email Configuration**: Verify an email address in SES (approximately 5 minutes, see [detailed guide](docs/email-setup.md)).
-2. **Deployment**: Execute the deployment command from [deployment documentation](docs/deployment.md) to provision resources.
-3. **Initial Report**: Generate your first security assessment report to receive a CSV and executive summary.
+```bash
+# 1. Clone
+git clone https://github.com/nb67df5gpm-hash/aws-automated-access-review.git
+cd aws-automated-access-review
 
-### Detailed Setup Steps
+# 2. Install deps
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/ajy0127/aws_automated_access_review.git
-   cd aws_automated_access_review
-   ```
+# 3. Verify AWS creds
+./scripts/check_aws_creds.sh --profile your-aws-profile
 
-2. Set up a Python virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+# 4. Deploy
+./scripts/deploy.sh --email your.email@example.com --profile your-aws-profile
 
-3. Check your AWS credentials and required services:
-   ```
-   ./scripts/check_aws_creds.sh
-   ```
-   
-   You can specify an AWS profile:
-   ```
-   ./scripts/check_aws_creds.sh --profile your-aws-profile
-   ```
+# 5. Click the SES verification link in your inbox  ⚠️  REQUIRED
 
-4. Run the deployment script:
-   ```
-   ./scripts/deploy.sh --email your.email@example.com
-   ```
-
-   Additional options:
-   - `--stack-name`: Custom CloudFormation stack name (default: aws-access-review)
-   - `--region`: AWS region for deployment (default: us-east-1)
-   - `--schedule`: Schedule expression for running the review (default: rate(30 days))
-   - `--profile`: AWS CLI profile to use for credentials (default: uses default profile)
-
-5. **⚠️ IMPORTANT: Verify your email address by clicking the link in the verification email sent by AWS SES before proceeding!**
-
-6. Run an immediate access review report:
-   ```
-   ./scripts/run_report.sh
-   ```
-   
-   You can specify the same options as with the deployment script:
-   ```
-   ./scripts/run_report.sh --stack-name your-stack-name --region your-region --profile your-aws-profile
-   ```
-
-## Cost & Scale Estimates
-
-- Expected cost: Approximately $1/month in us-east-1 for a typical account.
-- Scale: Successfully tested with AWS accounts containing up to 2000 resources and 500 IAM entities.
-- Resource usage: Minimal; Lambda execution typically completes within 2-3 minutes.
-
-## How It Works
-
-1. The Lambda function runs on the configured schedule
-2. It collects security findings from multiple AWS services
-3. Amazon Bedrock generates a narrative summary of the findings
-4. A detailed report is stored in S3 and sent via email
-5. The report categorizes findings by severity and provides recommendations
-
-### Sample Report Output
-
-```
-## AWS Access Review Summary - March 1, 2025
-
-### Executive Summary
-Your AWS environment has 17 security findings across 3 categories. Most critical: 2 IAM users with overly permissive policies and 1 S3 bucket with public access.
-
-### Critical Findings
-- Two admin IAM users are missing MFA: `admin-user1`, `dev-admin`
-- S3 bucket `customer-data-bucket-prod` allows public read access
-- Root account access key is active (should be removed immediately)
-
-### Recommendations
-1. Enable MFA for all admin users (priority: HIGH)
-2. Remove public access from S3 bucket `customer-data-bucket-prod`
-3. Delete root account access key
-4. Review and prune unused IAM roles (5 roles unused for >90 days)
-
-Full details in the attached CSV report.
+# 6. Trigger an immediate report
+./scripts/run_report.sh --profile your-aws-profile
 ```
 
-The email includes both this readable summary and a detailed CSV with all findings.
+Optional flags:
+- `--stack-name` — CloudFormation stack name (default `aws-access-review`)
+- `--region` — region (default `us-east-1`)
+- `--schedule` — EventBridge schedule (default `rate(30 days)`)
 
-## Project Architecture
+## What you receive
 
-The project follows a modular architecture to improve maintainability and testability:
+- **Email** — executive summary (Bedrock-generated) + CSV attachment
+- **S3 object** — same report stored for audit evidence
+- **CSV columns** — `id, category, severity, resource_type, resource_id, description, recommendation, compliance, detection_date`
+
+## Repo layout
 
 ```
 src/
-├── lambda/
-│   ├── index.py                # Main Lambda handler
-│   └── modules/
-│       ├── __init__.py
-│       ├── iam_findings.py     # IAM security checks
-│       ├── scp_findings.py     # Service Control Policy checks
-│       ├── securityhub_findings.py # Security Hub integration
-│       ├── access_analyzer_findings.py # IAM Access Analyzer integration
-│       ├── cloudtrail_findings.py # CloudTrail configuration checks
-│       ├── narrative.py        # AI narrative generation with Bedrock
-│       ├── reporting.py        # CSV report generation
-│       └── email_utils.py      # Email functionality with SES
-├── tests/
-│   └── unit/                   # Unit tests for modules
+├── cli/                          # Local CLI entrypoints
+└── lambda/
+    ├── index.py                  # Lambda handler
+    └── modules/
+        ├── iam_findings.py
+        ├── securityhub_findings.py
+        ├── access_analyzer_findings.py
+        ├── cloudtrail_findings.py
+        ├── scp_findings.py
+        ├── narrative.py          # Bedrock narrative generation
+        ├── reporting.py          # CSV output
+        └── email_utils.py        # SES delivery
 templates/
-├── access-review.yaml          # CloudFormation template with embedded Lambda code
-└── access-review-real.yaml     # Production template with separate Lambda deployment
+├── access-review.yaml            # Embedded-Lambda variant (demo-friendly)
+└── access-review-real.yaml       # Production variant (zip-deployed Lambda)
 scripts/
-├── deploy.sh                   # Deployment script
-├── run_report.sh               # Run immediate report
-└── check_aws_creds.sh          # Verify AWS credentials
+├── deploy.sh                     # Deploy stack + Lambda zip
+├── run_report.sh                 # Manually invoke a report
+└── check_aws_creds.sh            # Pre-flight credential check
+tests/unit/                       # Pytest unit tests
+examples/
+├── sample-access-report.csv      # Original tutorial sample
+└── my-run-redacted.csv           # My real run (redacted)
 ```
 
-### CloudFormation Templates
+## Running tests locally
 
-The project includes two CloudFormation templates:
+```bash
+python -m pytest tests/unit
+```
 
-1. **access-review.yaml**: Contains embedded Lambda code directly in the template. This is useful for demonstrations and small tests as it doesn't require a separate build/deploy step.
+## Cost & scale
 
-2. **access-review-real.yaml**: Uses a placeholder Lambda function that will be updated after stack creation. This is the production deployment approach, where the Lambda code is separately packaged and updated using the AWS CLI. The deployment script uses this template.
+- **~$1/month** in `us-east-1` for a typical lab account
+- Tested on accounts with up to ~2000 resources / 500 IAM entities
+- Lambda completes in 2–3 minutes per run
 
-## Running Reports
+## Troubleshooting (from my own deploys)
 
-The AWS Access Review tool runs automatically according to the schedule you specified during deployment (default: monthly). However, you can also trigger a report manually:
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Email never arrives | SES sender not verified | Click the verification link in the inbox AWS sent to your address |
+| `Access denied` on Bedrock | Model access not requested | Open Bedrock console → Model access → request Anthropic Claude |
+| Lambda times out | Large account | Bump `Timeout` in `templates/access-review-real.yaml` (default 5 min) |
+| CSV missing CloudTrail row | CloudTrail genuinely not enabled | Enable a trail; the check correctly reports the gap |
+| `No custom SCPs detected` flagged | Account is not part of an Org with SCPs | Informational; expected for standalone lab accounts |
 
-1. Using the provided script:
-   ```
-   ./scripts/run_report.sh --profile your-aws-profile
-   ```
-   
-   This script will:
-   - Find your Lambda function from the CloudFormation stack
-   - Invoke it with an empty event payload
-   - Provide a link to CloudWatch logs for monitoring progress
+## Credit
 
-2. Using the AWS Console:
-   - Navigate to the Lambda console
-   - Find the function named `<stack-name>-access-review`
-   - Click "Test" and use an empty event `{}`
-   
-3. Using the AWS CLI directly:
-   ```
-   aws lambda invoke --function-name <stack-name>-access-review --payload '{}' response.json --profile your-aws-profile
-   ```
-
-Reports are sent to the email address you specified during deployment and are also stored in the S3 bucket created by the CloudFormation stack.
-
-## Development Guide
-
-### Local Development Environment
-
-1. Set up a virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. Run unit tests:
-   ```
-   python -m pytest tests/unit
-   ```
-
-3. For local development, you can use the following environment variables:
-   ```
-   export REPORT_BUCKET=your-bucket-name
-   export RECIPIENT_EMAIL=your.email@example.com
-   ```
-
-### Adding New Functionality
-
-To add a new security check or feature:
-
-1. Create a new module in `src/lambda/modules/`
-2. Implement your functionality in the new module
-3. Update `src/lambda/index.py` to import and use your new module
-4. Add unit tests in `tests/unit/`
-5. Run the tests to ensure your changes don't break existing functionality
-6. Update documentation as needed
-
-### Deployment
-
-The deployment process is handled by `scripts/deploy.sh`, which:
-
-1. Prepares the deployment files
-2. Creates a Lambda deployment package
-3. Deploys the CloudFormation stack
-4. Updates the Lambda function code
-
-## Troubleshooting
-
-### AWS Credentials
-
-- **"Unable to locate credentials"**: Configure your AWS credentials using `aws configure` or specify a profile with `--profile`
-- **"The config profile could not be found"**: Check available profiles with `aws configure list-profiles`
-- **"Access denied"**: Ensure your AWS credentials have the necessary permissions
-
-### Email Verification
-
-- **Email not received**: Verify that your email address is verified in Amazon SES
-  - Check your CloudFormation stack outputs for the recipient email
-  - Verify the email in the SES console: https://console.aws.amazon.com/ses/home#verified-senders-email
-  - Check your spam folder for the verification email
-
-### Lambda Function
-
-- **Lambda function timeout**: The default timeout is 5 minutes. If your AWS environment is large, you might need to increase this by modifying the CloudFormation template.
-- **Memory issues**: If you see out-of-memory errors, increase the Lambda function memory in the CloudFormation template.
-
-## Contributing
-
-We welcome contributions to improve AWS Access Review! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute to this project.
+Built on top of the excellent scaffold by [@ajy0127](https://github.com/ajy0127/aws_automated_access_review) (part of the [GRC Portfolio Hub](https://github.com/ajy0127/grc_portfolio)). My work here is deployment, real-world testing, troubleshooting, and documentation — sharing the experience as a learning artifact.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
-## Version
+---
 
-Current version: See the [VERSION](VERSION) file.
+Maintained by [Shuayb](https://www.linkedin.com/in/shu-/).
