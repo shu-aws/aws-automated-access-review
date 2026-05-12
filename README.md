@@ -99,7 +99,7 @@ Honest list of things this project taught me:
 
 ```bash
 # 1. Clone
-git clone https://github.com/nb67df5gpm-hash/aws-automated-access-review.git
+git clone https://github.com/shu-aws/aws-automated-access-review.git
 cd aws-automated-access-review
 
 # 2. Install deps
